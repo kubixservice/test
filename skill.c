@@ -2271,7 +2271,7 @@ int skill_attack(int attack_type, struct block_list* src, struct block_list *dsr
 			flag |= 2;
 			/* bugreport:7859 magical reflected zeroes blow count */
 			dmg.blewcount = 0;
-			////Spirit of Wizard blocks Kaite's reflection
+			//Spirit of Wizard blocks Kaite's reflection
 			if (reflecttype == 2 && sc && sc->data[SC_SOULLINK] && sc->data[SC_SOULLINK]->val2 == SL_WIZARD) {
 				//Consume one Fragment per hit of the casted skill? [Skotlex+Kubix]
 				if (map->list[sd->bl.m].flag.gvg)
@@ -7703,71 +7703,38 @@ int skill_castend_nodamage_id(struct block_list *src, struct block_list *bl, uin
 
 		// Slim Pitcher
 		case CR_SLIMPITCHER:
-			if (sd) {
-				int i = skill_lv%11 - 1;
-				int j = pc->search_inventory(sd,skill->dbs->db[skill_id].itemid[i]);
-				int needed = skill->dbs->db[skill_id].itemid[i];
-				int id = INDEX_NOT_FOUND;
-				
-				if(needed == ITEMID_WHITE_SLIM_POTION)
-				{
-					if (map->list[sd->bl.m].flag.gvg)
-						id = pc->search_inventory(sd, ITEMID_WOESLIMPOT);
-					else if(map->list[sd->bl.m].flag.battleground)
-						id = pc->search_inventory(sd, ITEMID_BGSLIMPOT);
-					
-					if(id != INDEX_NOT_FOUND)
-						j = id;
+			// Updated to block Slim Pitcher from working on barricades and guardian stones.
+			if (dstmd != NULL && (dstmd->class_ == MOBID_EMPELIUM || (dstmd->class_ >= MOBID_BARRICADE && dstmd->class_ <= MOBID_S_EMPEL_2)))
+				break;
+			if (script->potion_hp || script->potion_sp) {
+				int hp = script->potion_hp, sp = script->potion_sp;
+				hp = hp * (100 + (tstatus->vit<<1))/100;
+				sp = sp * (100 + (tstatus->int_<<1))/100;
+				if (dstsd) {
+					if (hp)
+						hp = hp * (100 + pc->checkskill(dstsd,SM_RECOVERY)*10 + pc->skillheal2_bonus(dstsd, skill_id))/100;
+					if (sp)
+						sp = sp * (100 + pc->checkskill(dstsd,MG_SRECOVERY)*10 + pc->skillheal2_bonus(dstsd, skill_id))/100;
 				}
-				
-				if (j == INDEX_NOT_FOUND || sd->inventory_data[j] == NULL || sd->status.inventory[j].amount < skill->dbs->db[skill_id].amount[i])
-				{
-					clif->skill_fail(sd,skill_id,USESKILL_FAIL_LEVEL,0);
-					return 1;
+				if( tsc && tsc->count ) {
+					if (tsc->data[SC_CRITICALWOUND]) {
+						hp -= hp * tsc->data[SC_CRITICALWOUND]->val2 / 100;
+						sp -= sp * tsc->data[SC_CRITICALWOUND]->val2 / 100;
+					}
+					if (tsc->data[SC_DEATHHURT]) {
+						hp -= hp * 20 / 100;
+						sp -= sp * 20 / 100;
+					}
+					if( tsc->data[SC_WATER_INSIGNIA] && tsc->data[SC_WATER_INSIGNIA]->val1 == 2) {
+						hp += hp / 10;
+						sp += sp / 10;
+					}
 				}
-				script->potion_flag = 1;
-				script->potion_hp = 0;
-				script->potion_sp = 0;
-				script->run_use_script(sd, sd->inventory_data[j], 0);
-				script->potion_flag = 0;
-				//Apply skill bonuses
-				i = pc->checkskill(sd,CR_SLIMPITCHER)*10
-					+ pc->checkskill(sd,AM_POTIONPITCHER)*10
-					+ pc->checkskill(sd,AM_LEARNINGPOTION)*5
-					+ pc->skillheal_bonus(sd, skill_id);
-
-				script->potion_hp = script->potion_hp * (100+i)/100;
-				script->potion_sp = script->potion_sp * (100+i)/100;
-
-				if(script->potion_hp > 0 || script->potion_sp > 0) {
-					i = skill->get_splash(skill_id, skill_lv);
-					map->foreachinarea(skill->area_sub,
-					                   src->m,x-i,y-i,x+i,y+i,BL_CHAR,
-					                   src,skill_id,skill_lv,tick,flag|BCT_PARTY|BCT_GUILD|1,
-					                   skill->castend_nodamage_id);
-				}
-			} else {
-				int i = skill_lv%11 - 1;
-				struct item_data *item;
-				i = skill->dbs->db[skill_id].itemid[i];
-				item = itemdb->search(i);
-				script->potion_flag = 1;
-				script->potion_hp = 0;
-				script->potion_sp = 0;
-				script->run(item->script,0,src->id,0);
-				script->potion_flag = 0;
-				i = skill->get_max(CR_SLIMPITCHER)*10;
-
-				script->potion_hp = script->potion_hp * (100+i)/100;
-				script->potion_sp = script->potion_sp * (100+i)/100;
-
-				if(script->potion_hp > 0 || script->potion_sp > 0) {
-					i = skill->get_splash(skill_id, skill_lv);
-					map->foreachinarea(skill->area_sub,
-					                   src->m,x-i,y-i,x+i,y+i,BL_CHAR,
-					                   src,skill_id,skill_lv,tick,flag|BCT_PARTY|BCT_GUILD|1,
-					                   skill->castend_nodamage_id);
-				}
+				if(hp > 0)
+					clif->skill_nodamage(NULL,bl,AL_HEAL,hp,1);
+				if(sp > 0)
+					clif->skill_nodamage(NULL,bl,MG_SRECOVERY,sp,1);
+				status->heal(bl,hp,sp,0);
 			}
 			break;
 		// Full Chemical Protection
@@ -10693,9 +10660,22 @@ int skill_castend_pos2(struct block_list* src, int x, int y, uint16 skill_id, ui
 			if (sd) {
 				int i = skill_lv%11 - 1;
 				int j = pc->search_inventory(sd,skill->dbs->db[skill_id].itemid[i]);
-				if (j == INDEX_NOT_FOUND || skill->dbs->db[skill_id].itemid[i] <= 0
-				 || sd->inventory_data[j] == NULL || sd->status.inventory[j].amount < skill->dbs->db[skill_id].amount[i]
-				) {
+				int needed = skill->dbs->db[skill_id].itemid[i];
+				int id = INDEX_NOT_FOUND;
+				
+				if(needed == ITEMID_WHITE_SLIM_POTION)
+				{
+					if (map->list[sd->bl.m].flag.gvg)
+						id = pc->search_inventory(sd, ITEMID_WOESLIMPOT);
+					else if(map->list[sd->bl.m].flag.battleground)
+						id = pc->search_inventory(sd, ITEMID_BGSLIMPOT);
+					
+					if(id != INDEX_NOT_FOUND)
+						j = id;
+				}
+				
+				if (j == INDEX_NOT_FOUND || sd->inventory_data[j] == NULL || sd->status.inventory[j].amount < skill->dbs->db[skill_id].amount[i])
+				{
 					clif->skill_fail(sd,skill_id,USESKILL_FAIL_LEVEL,0);
 					return 1;
 				}
@@ -14675,9 +14655,8 @@ struct skill_condition skill_get_requirement(struct map_session_data* sd, uint16
 				}
 			}
 			// =========BY KUBIX
-		}				
-
 		}
+		
 		if (skill_id >= HT_SKIDTRAP && skill_id <= HT_TALKIEBOX && pc->checkskill(sd, RA_RESEARCHTRAP) > 0) {
 			int16 item_index;
 			if ((item_index = pc->search_inventory(sd, req.itemid[i])) == INDEX_NOT_FOUND
@@ -14688,9 +14667,8 @@ struct skill_condition skill_get_requirement(struct map_session_data* sd, uint16
 			}
 			break;
 		}
-	}
-	
-	// Special BG & WoE items by Kubix
+		
+		// Special BG & WoE items by Kubix
 		if (req.itemid[i] == ITEMID_ACID_BOTTLE)
 		{
 			if (map->list[sd->bl.m].flag.gvg)
@@ -14888,6 +14866,7 @@ struct skill_condition skill_get_requirement(struct map_session_data* sd, uint16
 			}			
 		}
 		// Special BG & WoE items by Kubix
+	}
 
 	/* requirements are level-dependent */
 	switch( skill_id ) {
